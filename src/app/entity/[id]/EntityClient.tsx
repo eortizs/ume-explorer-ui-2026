@@ -8,7 +8,13 @@ import { MoveAssetModal } from '@/components/MoveAssetModal';
 import { EntityNotFound } from '@/components/EntityNotFound';
 import { useTenantUser } from '@/context/TenantUserContext';
 import { ENTITY_QUERY, SUBTREE_QUERY } from '@/lib/queries';
-import { encodeSessionHeader, isUuid } from '@/lib/session';
+import {
+  ANONYMOUS_USER_ID,
+  encodeSessionHeader,
+  isUuid,
+} from '@/lib/session';
+import { bff } from '@/lib/bffPath';
+import { defaultSubtreeRole } from '@/lib/subtreeRoles';
 import { treeFromSubtree } from '@/lib/treeFromSubtree';
 import type {
   JournalEntry,
@@ -30,28 +36,87 @@ interface SubtreePayload {
   subtree: SubtreeNode[];
 }
 
+interface ResolvedTenant {
+  tenantId: string;
+  userId: string;
+  type: string;
+  name: string;
+  mode: 'resolved-by-id';
+}
+
 const DEFAULT_MAX_DEPTH = 8;
 
 export default function EntityClient({ id }: { id: string }) {
-  const { creds } = useTenantUser();
+  const { creds, setCreds } = useTenantUser();
   const [entity, setEntity] = useState<EntityPayload['entity'] | null>(null);
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [journals, setJournals] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [resolved, setResolved] = useState<ResolvedTenant | null>(null);
   const [showMove, setShowMove] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
 
+  // Resolve tenant from entity id when no creds are set.
   useEffect(() => {
-    if (!creds) {
-      setEntity(null);
-      setTree([]);
-      setJournals([]);
+    if (creds) {
+      setResolved(null);
+      return;
+    }
+    if (!isUuid(id)) {
+      setError('ID inválido.');
       setLoading(false);
       return;
     }
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const r = await fetch(
+          bff(`/api/bff/entity-tenant?id=${encodeURIComponent(id)}`),
+          { cache: 'no-store' },
+        );
+        const j = (await r.json()) as {
+          ok: boolean;
+          tenantId?: string;
+          userId?: string;
+          type?: string;
+          name?: string;
+          mode?: 'resolved-by-id';
+          error?: { code: string; message: string };
+        };
+        if (cancelled) return;
+        if (!r.ok || !j.ok) {
+          setError(j.error?.message ?? `Lookup failed (HTTP ${r.status})`);
+          setLoading(false);
+          return;
+        }
+        const next: ResolvedTenant = {
+          tenantId: j.tenantId!,
+          userId: j.userId ?? ANONYMOUS_USER_ID,
+          type: j.type!,
+          name: j.name!,
+          mode: 'resolved-by-id',
+        };
+        setResolved(next);
+        // Auto-bind session so subsequent GraphQL calls succeed.
+        setCreds({ tenantId: next.tenantId, userId: next.userId });
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, creds, setCreds]);
+
+  useEffect(() => {
+    const effectiveCreds = creds ?? (resolved ? { tenantId: resolved.tenantId, userId: resolved.userId } : null);
+    if (!effectiveCreds) return;
     if (!isUuid(id)) {
       setError('ID inválido.');
       setEntity(null);
@@ -63,34 +128,20 @@ export default function EntityClient({ id }: { id: string }) {
     setLoading(true);
     setError(null);
 
-    const sessionHeader = encodeSessionHeader(creds);
+    const sessionHeader = encodeSessionHeader(effectiveCreds);
 
     (async () => {
       try {
-        const [entityRes, subtreeRes] = await Promise.all([
-          fetch('/api/bff/graphql', {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              'x-ume-session': sessionHeader,
-            },
-            body: JSON.stringify({ query: ENTITY_QUERY, variables: { id } }),
-            signal: controller.signal,
-          }),
-          fetch('/api/bff/graphql', {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              'x-ume-session': sessionHeader,
-            },
-            body: JSON.stringify({
-              query: SUBTREE_QUERY,
-              variables: { rootId: id, maxDepth: DEFAULT_MAX_DEPTH },
-            }),
-            signal: controller.signal,
-          }),
-        ]);
-
+        // 1) Load entity first so we can pick the correct composition role.
+        const entityRes = await fetch(bff('/api/bff/graphql'), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-ume-session': sessionHeader,
+          },
+          body: JSON.stringify({ query: ENTITY_QUERY, variables: { id } }),
+          signal: controller.signal,
+        });
         if (!entityRes.ok) {
           const data = await entityRes.json().catch(() => ({}));
           throw new Error(
@@ -98,20 +149,42 @@ export default function EntityClient({ id }: { id: string }) {
               `Entity fetch failed (HTTP ${entityRes.status})`,
           );
         }
-        if (!subtreeRes.ok) {
-          const data = await subtreeRes.json().catch(() => ({}));
-          throw new Error(
-            data?.error?.message ??
-              `Subtree fetch failed (HTTP ${subtreeRes.status})`,
-          );
-        }
-
         const entityBody = (await entityRes.json()) as {
           data?: EntityPayload;
           errors?: Array<{ message: string }>;
         };
         if (entityBody.errors?.length) {
           throw new Error(entityBody.errors.map((e) => e.message).join('; '));
+        }
+        const loaded = entityBody.data?.entity ?? null;
+        setEntity(loaded);
+
+        // 2) Subtree with role from entity type (fallbacks: resolved hint → contains_component).
+        const treeRole = defaultSubtreeRole(
+          loaded?.type ?? resolved?.type ?? null,
+        );
+        const subtreeRes = await fetch(bff('/api/bff/graphql'), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-ume-session': sessionHeader,
+          },
+          body: JSON.stringify({
+            query: SUBTREE_QUERY,
+            variables: {
+              rootId: id,
+              maxDepth: DEFAULT_MAX_DEPTH,
+              role: treeRole,
+            },
+          }),
+          signal: controller.signal,
+        });
+        if (!subtreeRes.ok) {
+          const data = await subtreeRes.json().catch(() => ({}));
+          throw new Error(
+            data?.error?.message ??
+              `Subtree fetch failed (HTTP ${subtreeRes.status})`,
+          );
         }
         const subtreeBody = (await subtreeRes.json()) as {
           data?: SubtreePayload;
@@ -121,11 +194,13 @@ export default function EntityClient({ id }: { id: string }) {
           throw new Error(subtreeBody.errors.map((e) => e.message).join('; '));
         }
 
-        setEntity(entityBody.data?.entity ?? null);
-        setTree(treeFromSubtree(subtreeBody.data?.subtree ?? [], { rootId: id }));
-        const journalRows: JournalEntry[] = (
-          entityBody.data?.entity?.journals ?? []
-        )
+        setTree(
+          treeFromSubtree(subtreeBody.data?.subtree ?? [], {
+            rootId: id,
+            edgeRole: treeRole,
+          }),
+        );
+        const journalRows: JournalEntry[] = (loaded?.journals ?? [])
           .map((j) => j.targetEntity as unknown as JournalEntry | null)
           .filter((t): t is JournalEntry => t !== null);
         setJournals(journalRows);
@@ -138,14 +213,14 @@ export default function EntityClient({ id }: { id: string }) {
     })();
 
     return () => controller.abort();
-  }, [id, creds, reloadKey]);
+  }, [id, creds, resolved, reloadKey]);
 
-  if (!creds) {
+  if (!creds && !resolved) {
     return (
       <main>
         <HeaderAuthBar />
         <section className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">
-          Configura tenant y usuario en la barra superior.
+          Resolviendo tenant desde el ID…
         </section>
       </main>
     );
@@ -185,6 +260,14 @@ export default function EntityClient({ id }: { id: string }) {
   return (
     <main>
       <HeaderAuthBar />
+      {resolved && resolved.mode === 'resolved-by-id' && (
+        <div className="mx-auto mt-2 max-w-[1200px] px-6 text-[11px] text-slate-500">
+          Sesión anónima autocompletada desde el ID: tenant{' '}
+          <span className="font-mono">{resolved.tenantId}</span> · user{' '}
+          <span className="font-mono">{(resolved.userId ?? ANONYMOUS_USER_ID).slice(0, 8)}…</span>
+          {' '}(solo lectura — escribe en la barra superior para mutar).
+        </div>
+      )}
 
       <section className="mt-4 flex flex-wrap items-baseline justify-between gap-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div>

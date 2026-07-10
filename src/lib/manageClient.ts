@@ -5,10 +5,36 @@ export const MANAGE_BASE_URL = (
   process.env.MANAGE_BASE_URL ?? 'http://127.0.0.1:3002'
 ).replace(/\/$/, '');
 
+/** Upstream timeout — fail fast so nginx never serves a blank 504 cascade. */
+export function manageTimeoutMs(): number {
+  const v = Number(process.env.MANAGE_UPSTREAM_TIMEOUT_MS ?? '20_000');
+  if (!Number.isFinite(v) || v < 2_000) return 20_000;
+  return Math.floor(v);
+}
+
 export interface AuthHeaders {
   'x-tenant-id': string;
   'x-user-id': string;
   authorization?: string;
+}
+
+async function timedFetch(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  const timeoutMs = manageTimeoutMs();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal, cache: 'no-store' });
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') {
+      throw new Error(`ume-management-core timeout after ${timeoutMs}ms`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function forwardGraphql(
@@ -16,14 +42,13 @@ export async function forwardGraphql(
   variables: Record<string, unknown> | null,
   auth: AuthHeaders,
 ): Promise<{ status: number; body: unknown }> {
-  const res = await fetch(`${MANAGE_BASE_URL}/api/v1/graphql`, {
+  const res = await timedFetch(`${MANAGE_BASE_URL}/api/v1/graphql`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       ...auth,
     },
     body: JSON.stringify({ query, variables: variables ?? {} }),
-    cache: 'no-store',
   });
   const text = await res.text();
   let parsed: unknown = text;
@@ -42,7 +67,7 @@ export async function forwardRest(
   auth: AuthHeaders,
   extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; body: ManageResponse<unknown> | unknown }> {
-  const res = await fetch(`${MANAGE_BASE_URL}${path}`, {
+  const res = await timedFetch(`${MANAGE_BASE_URL}${path}`, {
     method,
     headers: {
       'content-type': 'application/json',
@@ -50,7 +75,6 @@ export async function forwardRest(
       ...extraHeaders,
     },
     body: JSON.stringify(body),
-    cache: 'no-store',
   });
   const text = await res.text();
   let parsed: unknown = text;

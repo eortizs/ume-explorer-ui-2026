@@ -2,7 +2,7 @@ import type { SubtreeNode, TreeNode } from './types';
 
 export function treeFromSubtree(
   rows: SubtreeNode[],
-  options: { rootId?: string } = {},
+  options: { rootId?: string; edgeRole?: string } = {},
 ): TreeNode[] {
   if (rows.length === 0) return [];
 
@@ -14,6 +14,7 @@ export function treeFromSubtree(
       type: row.type,
       properties: {},
       children: [],
+      edgeRole: row.depth > 0 ? options.edgeRole : undefined,
     });
   }
 

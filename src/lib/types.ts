@@ -38,6 +38,8 @@ export interface TreeNode {
   type: string;
   properties: Record<string, unknown>;
   children: TreeNode[];
+  /** Edge role from parent → this node (from the subtree query). */
+  edgeRole?: string;
 }
 
 export interface JournalEntry {

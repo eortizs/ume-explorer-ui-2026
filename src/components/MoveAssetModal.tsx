@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { useTenantUser } from '@/context/TenantUserContext';
 import { encodeSessionHeader, isUuid } from '@/lib/session';
+import { bff } from '@/lib/bffPath';
 
 export interface MoveAssetModalProps {
   assetId: string;
@@ -84,7 +85,7 @@ export function MoveAssetModal({
 
     setSubmitting(true);
     try {
-      const res = await fetch('/api/bff/mutations/graph/move', {
+      const res = await fetch(bff('/api/bff/mutations/graph/move'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',

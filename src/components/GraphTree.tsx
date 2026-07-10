@@ -61,7 +61,7 @@ export function GraphTree({ node, currentDepth = 0, onSelect }: GraphTreeProps) 
         <div className="mt-2 space-y-1">
           {node.children.map((child) => (
             <div key={child.id}>
-              <EdgeLabel label="contains_component" />
+              <EdgeLabel label={child.edgeRole ?? 'contains_component'} />
               <GraphTree node={child} currentDepth={currentDepth + 1} onSelect={onSelect} />
             </div>
           ))}

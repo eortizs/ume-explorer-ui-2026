@@ -17,6 +17,9 @@ export function isUserId(value: string): boolean {
   return isUuid(value) && value.trim().length <= MAX_USER_LEN;
 }
 
+export const ANONYMOUS_USER_ID =
+  '00000000-0000-7000-8000-00000000ae01';
+
 export interface SessionCreds {
   tenantId: string;
   userId: string;
