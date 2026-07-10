@@ -12,6 +12,17 @@ export function manageTimeoutMs(): number {
   return Math.floor(v);
 }
 
+/** Marker error thrown by timedFetch on AbortError — distinguishable by callers. */
+export class ManageTimeoutError extends Error {
+  readonly code = 'MANAGE_TIMEOUT';
+  readonly timeoutMs: number;
+  constructor(timeoutMs: number) {
+    super(`ume-management-core timeout after ${timeoutMs}ms`);
+    this.name = 'ManageTimeoutError';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export interface AuthHeaders {
   'x-tenant-id': string;
   'x-user-id': string;
@@ -29,12 +40,21 @@ async function timedFetch(
     return await fetch(url, { ...init, signal: controller.signal, cache: 'no-store' });
   } catch (e) {
     if ((e as Error).name === 'AbortError') {
-      throw new Error(`ume-management-core timeout after ${timeoutMs}ms`);
+      throw new ManageTimeoutError(timeoutMs);
     }
     throw e;
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function isManageTimeout(err: unknown): err is ManageTimeoutError {
+  return (
+    err instanceof ManageTimeoutError ||
+    (typeof err === 'object' &&
+      err !== null &&
+      (err as { code?: string }).code === 'MANAGE_TIMEOUT')
+  );
 }
 
 export async function forwardGraphql(

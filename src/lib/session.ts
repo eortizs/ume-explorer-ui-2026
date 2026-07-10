@@ -20,6 +20,11 @@ export function isUserId(value: string): boolean {
 export const ANONYMOUS_USER_ID =
   '00000000-0000-7000-8000-00000000ae01';
 
+/** True when the given userId is the explorer auto-resolved sentinel. */
+export function isAnonymousUser(userId: string | undefined | null): boolean {
+  return typeof userId === 'string' && userId === ANONYMOUS_USER_ID;
+}
+
 export interface SessionCreds {
   tenantId: string;
   userId: string;

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { forwardGraphql } from '@/lib/manageClient';
+import { forwardGraphql, isManageTimeout } from '@/lib/manageClient';
 import { parseSessionHeader } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
@@ -65,6 +65,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
     return NextResponse.json(upstream.body, { status: upstream.status });
   } catch (err) {
+    if (isManageTimeout(err)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'MANAGE_TIMEOUT',
+            message:
+              'ume-management-core no respondió dentro del tiempo límite. Reintenta o reduce la profundidad.',
+          },
+        },
+        { status: 504 },
+      );
+    }
     return NextResponse.json(
       {
         success: false,

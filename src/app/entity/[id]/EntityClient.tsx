@@ -255,18 +255,21 @@ export default function EntityClient({ id }: { id: string }) {
     );
   }
 
+  const effectiveCreds = creds ?? (resolved ? { tenantId: resolved.tenantId, userId: resolved.userId } : null);
+  const isAnonymous = effectiveCreds?.userId === ANONYMOUS_USER_ID;
+
   const defaultParentId = entity.containedBy?.[0]?.targetId ?? undefined;
 
   return (
     <main>
       <HeaderAuthBar />
-      {resolved && resolved.mode === 'resolved-by-id' && (
-        <div className="mx-auto mt-2 max-w-[1200px] px-6 text-[11px] text-slate-500">
-          Sesión anónima autocompletada desde el ID: tenant{' '}
-          <span className="font-mono">{resolved.tenantId}</span> · user{' '}
-          <span className="font-mono">{(resolved.userId ?? ANONYMOUS_USER_ID).slice(0, 8)}…</span>
-          {' '}(solo lectura — escribe en la barra superior para mutar).
-        </div>
+      {isAnonymous && (
+        <section className="mx-auto mt-3 max-w-[1200px] rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-[12px] text-amber-900">
+          <strong>Sesión de solo lectura</strong> — autocompletada desde el ID (
+          tenant <span className="font-mono">{effectiveCreds!.tenantId}</span>, user{' '}
+          <span className="font-mono">{effectiveCreds!.userId.slice(0, 8)}…</span>).
+          Configura un usuario real en la barra superior para habilitar Mover.
+        </section>
       )}
 
       <section className="mt-4 flex flex-wrap items-baseline justify-between gap-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -283,7 +286,14 @@ export default function EntityClient({ id }: { id: string }) {
         <button
           type="button"
           onClick={() => setShowMove(true)}
-          className="rounded bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+          disabled={isAnonymous}
+          aria-disabled={isAnonymous}
+          title={
+            isAnonymous
+              ? 'Las sesiones anónimas son de solo lectura'
+              : 'Mover este asset a otro padre'
+          }
+          className="rounded bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
         >
           Mover…
         </button>

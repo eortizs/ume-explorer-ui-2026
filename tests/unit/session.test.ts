@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ANONYMOUS_USER_ID,
   encodeSessionHeader,
+  isAnonymousUser,
   isTenantId,
   isUserId,
   isUuid,
@@ -61,5 +63,14 @@ describe('session', () => {
     expect(isUuid('0190a3c2-b001-7000-8000-000000000000')).toBe(true);
     expect(isUuid('not-a-uuid')).toBe(false);
     expect(isUuid('')).toBe(false);
+  });
+
+  it('isAnonymousUser matches the reserved sentinel', () => {
+    expect(ANONYMOUS_USER_ID).toBe('00000000-0000-7000-8000-00000000ae01');
+    expect(isAnonymousUser(ANONYMOUS_USER_ID)).toBe(true);
+    expect(isAnonymousUser('0190a3c2-b001-7000-8000-000000000000')).toBe(false);
+    expect(isAnonymousUser('')).toBe(false);
+    expect(isAnonymousUser(null)).toBe(false);
+    expect(isAnonymousUser(undefined)).toBe(false);
   });
 });

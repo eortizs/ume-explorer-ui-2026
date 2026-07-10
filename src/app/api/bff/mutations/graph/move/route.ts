@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { forwardRest } from '@/lib/manageClient';
-import { parseSessionHeader, isUuid } from '@/lib/session';
+import { forwardRest, isManageTimeout } from '@/lib/manageClient';
+import { parseSessionHeader, isUuid, isAnonymousUser } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,6 +31,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         },
       },
       { status: 400 },
+    );
+  }
+
+  if (isAnonymousUser(session.userId)) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'ANONYMOUS_READ_ONLY',
+          message:
+            'Las sesiones anónimas (resueltas por ID) son de solo lectura. Configura un usuario real para mutar.',
+        },
+      },
+      { status: 403 },
     );
   }
 
@@ -101,6 +115,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
     return NextResponse.json(upstream.body, { status: upstream.status });
   } catch (err) {
+    if (isManageTimeout(err)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'MANAGE_TIMEOUT',
+            message:
+              'ume-management-core no respondió dentro del tiempo límite. Reintenta.',
+          },
+        },
+        { status: 504 },
+      );
+    }
     return NextResponse.json(
       {
         success: false,
